@@ -60,9 +60,10 @@ secure-chat/
 ## Installation & Setup
 
 ### 1. Clone the Repository
-
+```bash
 git clone https://github.com/binayakjoshi/secure-chat.git
 cd secure-chat
+```
 
 
 ### 2. Compile the Applications
