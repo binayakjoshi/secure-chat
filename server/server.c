@@ -28,9 +28,21 @@ void broadcast(const char *msg, size_t len, int exclude_fd) {
     char buffer[BUFFER_SIZE];
     memcpy(buffer, msg, len);
     xor_cipher(buffer, len);
+    
+    // Count active clients (excluding the sender)
+    int active_recipients = 0;
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].active && clients[i].fd != exclude_fd) {
-            send(clients[i].fd, buffer, len, 0);
+            active_recipients++;
+        }
+    }
+    
+    // Only broadcast if there are other clients to receive the message
+    if (active_recipients > 0) {
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].active && clients[i].fd != exclude_fd) {
+                send(clients[i].fd, buffer, len, 0);
+            }
         }
     }
 }
@@ -108,9 +120,19 @@ int main(int argc, char *argv[]) {
             if (n <= 0) {
                 // client leaving
                 if (clients[cid].active && clients[cid].username[0]) {
-                    char leave_msg[BUFFER_SIZE];
-                    int len = snprintf(leave_msg, sizeof(leave_msg), "%s has left", clients[cid].username);
-                    broadcast(leave_msg, len, fd);
+                    // Only broadcast leave message if there are other clients
+                    int other_clients = 0;
+                    for (int j = 0; j < MAX_CLIENTS; j++) {
+                        if (clients[j].active && clients[j].fd != fd) {
+                            other_clients++;
+                        }
+                    }
+                    
+                    if (other_clients > 0) {
+                        char leave_msg[BUFFER_SIZE];
+                        int len = snprintf(leave_msg, sizeof(leave_msg), "%s has left", clients[cid].username);
+                        broadcast(leave_msg, len, fd);
+                    }
                     printf("Client disconnected: %s (idx=%d)\n", clients[cid].username, cid);
                 }
                 remove_client(cid);
@@ -123,12 +145,40 @@ int main(int argc, char *argv[]) {
                     char *p = strstr(buf, " has joined");
                     if (p) *p = '\0';
                     strncpy(clients[cid].username, buf, sizeof(clients[cid].username)-1);
-                    char join_msg[BUFFER_SIZE];
-                    int len = snprintf(join_msg, sizeof(join_msg), "%s has joined", clients[cid].username);
-                    broadcast(join_msg, len, fd);
+                    
+                    // Only broadcast join message if there are other clients
+                    int other_clients = 0;
+                    for (int j = 0; j < MAX_CLIENTS; j++) {
+                        if (clients[j].active && clients[j].fd != fd) {
+                            other_clients++;
+                        }
+                    }
+                    
+                    if (other_clients > 0) {
+                        char join_msg[BUFFER_SIZE];
+                        int len = snprintf(join_msg, sizeof(join_msg), "%s has joined", clients[cid].username);
+                        broadcast(join_msg, len, fd);
+                    }
                     printf("Client joined: %s (idx=%d)\n", clients[cid].username, cid);
                 } else {
-                    broadcast(buf, n, fd);
+                    // Check if there are other clients to broadcast to
+                    int other_clients = 0;
+                    for (int j = 0; j < MAX_CLIENTS; j++) {
+                        if (clients[j].active && clients[j].fd != fd) {
+                            other_clients++;
+                        }
+                    }
+                    
+                    if (other_clients > 0) {
+                        broadcast(buf, n, fd);
+                    } else {
+                        // Send a notification back to the client that they're alone
+                        char alone_msg[] = "You are the only one online. Your message was not delivered.";
+                        char response[BUFFER_SIZE];
+                        memcpy(response, alone_msg, strlen(alone_msg));
+                        xor_cipher(response, strlen(alone_msg));
+                        send(fd, response, strlen(alone_msg), 0);
+                    }
                 }
             }
         }
