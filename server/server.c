@@ -6,10 +6,12 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <time.h>
 
 #define MAX_CLIENTS 100
 #define BUFFER_SIZE 1024
 #define XOR_KEY 0x5A
+#define LOG_FILE "chat_messages.txt"
 
 typedef struct {
     int fd;
@@ -20,6 +22,33 @@ typedef struct {
 client_t clients[MAX_CLIENTS];
 int listen_fd;
 
+// count the total clients connected
+int count_active_clients() {
+    int count = 0;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].active) {
+            count++;
+        }
+    }
+    return count;
+}
+
+// add message with time manche haru ko
+void log_message(const char *username, const char *message) {
+    FILE *log_file = fopen(LOG_FILE, "a");
+    if (log_file == NULL) {
+        perror("Failed to open log file");
+        return;
+    }
+    
+    time_t now = time(NULL);
+    char *time_str = ctime(&now);
+    time_str[strlen(time_str) - 1] = '\0'; 
+    
+    fprintf(log_file, "[%s] %s: %s\n", time_str, username, message);
+    fclose(log_file);
+}
+
 void xor_cipher(char *data, size_t len) {
     for (size_t i = 0; i < len; i++) data[i] ^= XOR_KEY;
 }
@@ -29,7 +58,7 @@ void broadcast(const char *msg, size_t len, int exclude_fd) {
     memcpy(buffer, msg, len);
     xor_cipher(buffer, len);
     
-    // Count active clients (excluding the sender)
+    //sender bahek client count garcha
     int active_recipients = 0;
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].active && clients[i].fd != exclude_fd) {
@@ -109,6 +138,7 @@ int main(int argc, char *argv[]) {
             pfds[idx+1].fd = client_fd;
             pfds[idx+1].events = POLLIN;
             printf("Client connected: fd=%d (idx=%d)\n", client_fd, idx);
+            printf("Total clients connected: %d\n", count_active_clients());
         }
         // Handle messages
         for (int i = 1; i <= MAX_CLIENTS; i++) {
@@ -137,6 +167,7 @@ int main(int argc, char *argv[]) {
                 }
                 remove_client(cid);
                 pfds[i].fd = -1;
+                printf("Total clients connected: %d\n", count_active_clients());
             } else {
                 xor_cipher(buf, n);
                 if (clients[cid].username[0] == '\0') {
@@ -160,6 +191,7 @@ int main(int argc, char *argv[]) {
                         broadcast(join_msg, len, fd);
                     }
                     printf("Client joined: %s (idx=%d)\n", clients[cid].username, cid);
+                    printf("Total clients connected: %d\n", count_active_clients());
                 } else {
                     // Check if there are other clients to broadcast to
                     int other_clients = 0;
@@ -171,6 +203,15 @@ int main(int argc, char *argv[]) {
                     
                     if (other_clients > 0) {
                         broadcast(buf, n, fd);
+                        //log extract garne
+                        buf[n] = '\0';
+                        char *colon = strchr(buf, ':');
+                        if (colon) {
+                            *colon = '\0';
+                            char *username = buf;
+                            char *message = colon + 2; // Skip ": "
+                            log_message(username, message);
+                        }
                     } else {
                         // Send a notification back to the client that they're alone
                         char alone_msg[] = "You are the only one online. Your message was not delivered.";
@@ -178,6 +219,16 @@ int main(int argc, char *argv[]) {
                         memcpy(response, alone_msg, strlen(alone_msg));
                         xor_cipher(response, strlen(alone_msg));
                         send(fd, response, strlen(alone_msg), 0);
+                        
+                        // Still log the message even if not delivered
+                        buf[n] = '\0';
+                        char *colon = strchr(buf, ':');
+                        if (colon) {
+                            *colon = '\0';
+                            char *username = buf;
+                            char *message = colon + 2; // Skip ": "
+                            log_message(username, message);
+                        }
                     }
                 }
             }
